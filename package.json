@@ -1,0 +1,49 @@
+{
+  "name": "step2glb",
+  "version": "0.1.0",
+  "description": "Deterministic STEP to GLB conversion for the web.",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/m1chlcz/step2glb.git"
+  },
+  "homepage": "https://github.com/m1chlcz/step2glb",
+  "bugs": "https://github.com/m1chlcz/step2glb/issues",
+  "keywords": [
+    "step",
+    "stp",
+    "glb",
+    "gltf",
+    "cad",
+    "converter",
+    "occt",
+    "three.js"
+  ],
+  "bin": {
+    "step2glb": "src/cli.mjs"
+  },
+  "exports": {
+    ".": "./src/step2glb.mjs"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@gltf-transform/core": "4.4.2",
+    "@gltf-transform/extensions": "4.4.2",
+    "@gltf-transform/functions": "4.4.2",
+    "draco3dgltf": "1.5.7",
+    "occt-import-js": "0.0.23",
+    "three": "0.185.1"
+  }
+}
