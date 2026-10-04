@@ -1,0 +1,54 @@
+name: Canary
+
+on:
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  latest:
+    name: Latest dependencies
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Install latest dependencies
+        run: npm install --no-save --package-lock=false @gltf-transform/core@latest @gltf-transform/extensions@latest @gltf-transform/functions@latest draco3dgltf@latest occt-import-js@latest three@latest
+      - name: Typecheck
+        run: npm run typecheck --if-present
+      - name: Test
+        run: npm test
+      - name: Build
+        run: npm run build --if-present
+  report:
+    name: Report failure
+    needs: latest
+    if: failure()
+    runs-on: ubuntu-24.04
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update a canary issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh label create canary --repo "${{ github.repository }}" --color B60205 --description "Latest-dependency canary failure" --force >/dev/null 2>&1 || true
+          body="The weekly latest-dependency run failed on $(date -u +%Y-%m-%d). See ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}."
+          existing=$(gh issue list --repo "${{ github.repository }}" --label canary --state open --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "${{ github.repository }}" --body "$body"
+          else
+            gh issue create --repo "${{ github.repository }}" --label canary --title "Canary: latest dependencies fail" --body "$body"
+          fi
