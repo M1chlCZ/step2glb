@@ -1,6 +1,6 @@
 {
   "name": "step2glb",
-  "version": "0.1.1-rc.1",
+  "version": "0.1.1-rc.2",
   "description": "Deterministic STEP to GLB conversion for the web.",
   "type": "module",
   "license": "MIT",
