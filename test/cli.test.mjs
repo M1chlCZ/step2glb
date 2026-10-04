@@ -175,5 +175,5 @@ test("help and version flags work without arguments", () => {
   assert.match(help.stdout, /Usage: step2glb/);
   const version = run(["--version"]);
   assert.equal(version.status, 0);
-  assert.match(version.stdout, /^\d+\.\d+\.\d+\n$/);
+  assert.match(version.stdout, /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?\n$/);
 });
