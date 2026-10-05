@@ -39,11 +39,11 @@
     "test": "node --test"
   },
   "dependencies": {
-    "@gltf-transform/core": "4.4.2",
-    "@gltf-transform/extensions": "4.4.2",
-    "@gltf-transform/functions": "4.4.2",
+    "@gltf-transform/core": "4.5.0",
+    "@gltf-transform/extensions": "4.5.0",
+    "@gltf-transform/functions": "4.5.0",
     "draco3dgltf": "1.5.7",
     "occt-import-js": "0.0.23",
-    "three": "0.185.1"
+    "three": "0.186.1"
   }
 }
