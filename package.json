@@ -1,6 +1,6 @@
 {
   "name": "step2glb",
-  "version": "0.1.1-rc.2",
+  "version": "0.1.1",
   "description": "Deterministic STEP to GLB conversion for the web.",
   "type": "module",
   "license": "MIT",
@@ -39,9 +39,9 @@
     "test": "node --test"
   },
   "dependencies": {
-    "@gltf-transform/core": "4.4.2",
-    "@gltf-transform/extensions": "4.4.2",
-    "@gltf-transform/functions": "4.4.2",
+    "@gltf-transform/core": "^4.5.1",
+    "@gltf-transform/extensions": "^4.5.1",
+    "@gltf-transform/functions": "^4.5.1",
     "draco3dgltf": "1.5.7",
     "occt-import-js": "0.0.23",
     "three": "0.185.1"
