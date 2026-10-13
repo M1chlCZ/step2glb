@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -176,4 +176,175 @@ test("help and version flags work without arguments", () => {
   const version = run(["--version"]);
   assert.equal(version.status, 0);
   assert.match(version.stdout, /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?\n$/);
+});
+
+test("batch converts files in sorted order and prints a versioned summary", () => {
+  const directory = mkdtempSync(join(tmpdir(), "step2glb-"));
+  const sources = join(directory, "sources");
+  mkdirSync(sources);
+  writeFileSync(join(sources, "beta.step"), readFileSync(fixture));
+  writeFileSync(join(sources, "alpha.step"), readFileSync(fixture));
+  const outDir = join(directory, "out");
+  const result = run(["batch", join(sources, "beta.step"), join(sources, "alpha.step"), "--out-dir", outDir]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.stdout.startsWith('{"version":1,"total":2,"succeeded":2,"failed":0,"results":['));
+  const summary = JSON.parse(result.stdout);
+  assert.deepEqual(
+    summary.results.map((item) => item.source),
+    [join(sources, "alpha.step"), join(sources, "beta.step")],
+  );
+  assert.deepEqual(
+    summary.results.map((item) => item.out),
+    [join(outDir, "alpha.glb"), join(outDir, "beta.glb")],
+  );
+  assert.deepEqual(summary.results.map((item) => item.ok), [true, true]);
+  assert.deepEqual(summary.results.map((item) => item.error), [null, null]);
+  for (const item of summary.results) {
+    assert.equal(readFileSync(item.out).toString("ascii", 0, 4), "glTF");
+  }
+});
+
+test("batch scans directories and walks them only with --recursive", () => {
+  const directory = mkdtempSync(join(tmpdir(), "step2glb-"));
+  const root = join(directory, "models");
+  mkdirSync(join(root, "nested"), { recursive: true });
+  writeFileSync(join(root, "top.step"), readFileSync(fixture));
+  writeFileSync(join(root, "notes.txt"), "not a model");
+  writeFileSync(join(root, "nested", "deep.step"), readFileSync(fixture));
+  const flatOut = join(directory, "flat");
+  const flat = run(["batch", root, "--out-dir", flatOut]);
+  assert.equal(flat.status, 0, flat.stderr);
+  assert.deepEqual(
+    JSON.parse(flat.stdout).results.map((item) => item.source),
+    [join(root, "top.step")],
+  );
+  assert.ok(!existsSync(join(flatOut, "deep.glb")));
+  const deepOut = join(directory, "deep");
+  const deep = run(["batch", root, "--out-dir", deepOut, "--recursive"]);
+  assert.equal(deep.status, 0, deep.stderr);
+  assert.deepEqual(
+    JSON.parse(deep.stdout).results.map((item) => item.source),
+    [join(root, "nested", "deep.step"), join(root, "top.step")],
+  );
+  assert.ok(existsSync(join(deepOut, "deep.glb")));
+  assert.ok(existsSync(join(deepOut, "top.glb")));
+});
+
+test("batch continues after a failed source and exits 1", () => {
+  const directory = mkdtempSync(join(tmpdir(), "step2glb-"));
+  const sources = join(directory, "sources");
+  mkdirSync(sources);
+  writeFileSync(join(sources, "broken.step"), "not a step file\n");
+  writeFileSync(join(sources, "good.step"), readFileSync(fixture));
+  const outDir = join(directory, "out");
+  const result = run(["batch", sources, "--out-dir", outDir]);
+  assert.equal(result.status, 1, result.stderr);
+  const summary = JSON.parse(result.stdout);
+  assert.equal(summary.total, 2);
+  assert.equal(summary.succeeded, 1);
+  assert.equal(summary.failed, 1);
+  const [broken, good] = summary.results;
+  assert.equal(broken.source, join(sources, "broken.step"));
+  assert.equal(broken.out, null);
+  assert.equal(broken.ok, false);
+  assert.match(broken.error, /STEP import failed/i);
+  assert.equal(good.ok, true);
+  assert.equal(good.error, null);
+  assert.ok(existsSync(join(outDir, "good.glb")));
+  assert.match(result.stderr, /broken\.step: failed: STEP import failed/i);
+});
+
+test("batch applies <basename>.json mappings from --mapping-dir when present", () => {
+  const directory = mkdtempSync(join(tmpdir(), "step2glb-"));
+  const sources = join(directory, "sources");
+  mkdirSync(sources);
+  writeFileSync(join(sources, "mapped.step"), readFileSync(fixture));
+  writeFileSync(join(sources, "plain.step"), readFileSync(fixture));
+  const manifest = inspectFixture();
+  const part = manifest.occurrences.find((item) => item.node_kind === "part");
+  const mappingDir = join(directory, "mappings");
+  mkdirSync(mappingDir);
+  writeFileSync(join(mappingDir, "mapped.json"), JSON.stringify([{
+    occurrence_id: part.id,
+    display_name: "Mapped body",
+    semantic_role: "body",
+  }]));
+  const outDir = join(directory, "out");
+  const result = run(["batch", sources, "--out-dir", outDir, "--mapping-dir", mappingDir]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).succeeded, 2);
+  const mapped = glbDocument(readFileSync(join(outDir, "mapped.glb")));
+  const plain = glbDocument(readFileSync(join(outDir, "plain.glb")));
+  assert.ok(mapped.nodes.some((node) => node.name === "Mapped body"));
+  assert.ok(!plain.nodes.some((node) => node.name === "Mapped body"));
+});
+
+test("batch and build report usage errors with exit code 2", () => {
+  const directory = mkdtempSync(join(tmpdir(), "step2glb-"));
+  const cases = [
+    { args: ["batch", fixture], message: /--out-dir/ },
+    { args: ["batch", "--out-dir", join(directory, "out")], message: /at least one input/ },
+    { args: ["batch", fixture, "--out-dir", join(directory, "out"), "--preset", "bogus"], message: /unknown preset/i },
+    { args: ["batch", fixture, "--out-dir", join(directory, "out"), "--quantize-normal", "40"], message: /--quantize-normal/ },
+    { args: ["batch", fixture, "--out-dir", join(directory, "out"), "--mapping-dir", fixture], message: /--mapping-dir is not a directory/i },
+    { args: ["build", fixture, "--out", join(directory, "x.glb"), "--preset", "bogus"], message: /unknown preset/i },
+    { args: ["batch", join(directory, "missing.step"), "--out-dir", join(directory, "out")], message: /input not found/i },
+  ];
+  for (const item of cases) {
+    const result = run(item.args);
+    assert.equal(result.status, 2, `${item.args.join(" ")}: ${result.stderr}`);
+    assert.match(result.stderr, item.message);
+    assert.equal(result.stdout, "");
+  }
+});
+
+test("presets change the build and explicit flags override them", () => {
+  const directory = mkdtempSync(join(tmpdir(), "step2glb-"));
+  const build = (out, extra = []) => {
+    const result = run(["build", fixture, "--out", out, ...extra]);
+    assert.equal(result.status, 0, result.stderr);
+    return readFileSync(out);
+  };
+  const defaults = build(join(directory, "default.glb"));
+  const web = build(join(directory, "web.glb"), ["--preset", "web"]);
+  const high = build(join(directory, "high.glb"), ["--preset", "high"]);
+  const overridden = build(join(directory, "override.glb"), [
+    "--preset", "web",
+    "--linear-deflection", "0.001",
+    "--angular-deflection", "0.5",
+    "--quantize-position", "24",
+    "--quantize-normal", "12",
+  ]);
+  assert.notDeepEqual(web, defaults);
+  assert.deepEqual(high, defaults);
+  assert.deepEqual(overridden, defaults);
+  const batchOut = join(directory, "batch");
+  const batch = run(["batch", fixture, "--out-dir", batchOut, "--preset", "web"]);
+  assert.equal(batch.status, 0, batch.stderr);
+  assert.deepEqual(readFileSync(join(batchOut, "two-tetrahedra.glb")), web);
+});
+
+test("progress lines go to stderr only", () => {
+  const directory = mkdtempSync(join(tmpdir(), "step2glb-"));
+  const sources = join(directory, "sources");
+  mkdirSync(sources);
+  writeFileSync(join(sources, "a.step"), readFileSync(fixture));
+  writeFileSync(join(sources, "b.step"), readFileSync(fixture));
+  const outDir = join(directory, "out");
+  const result = run(["batch", sources, "--out-dir", outDir, "--progress"]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).succeeded, 2);
+  assert.ok(!result.stdout.includes("inspecting"));
+  const lines = result.stderr.trimEnd().split("\n");
+  for (const line of lines) {
+    assert.match(line, /^\[\d\/2\] .+: (inspecting|building|writing .+|failed: .+)$/);
+  }
+  assert.ok(lines.some((line) => line.startsWith("[1/2]") && line.endsWith(": inspecting")));
+  assert.ok(lines.some((line) => line.startsWith("[2/2]") && line.includes(": writing ")));
+  const quiet = run(["batch", sources, "--out-dir", join(directory, "quiet")]);
+  assert.equal(quiet.status, 0, quiet.stderr);
+  assert.equal(quiet.stderr, "");
+  const single = run(["build", fixture, "--out", join(directory, "single.glb"), "--progress"]);
+  assert.equal(single.status, 0, single.stderr);
+  assert.match(single.stderr, /^\[1\/1\] .+: inspecting$/m);
 });

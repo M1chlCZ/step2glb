@@ -29,6 +29,7 @@
   "files": [
     "src",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE",
     "THIRD_PARTY.md"
   ],

@@ -18,6 +18,47 @@ export const LIMITS = Object.freeze({
   maxManifestBytes: 2 << 20,
 });
 
+export const DEFAULT_QUANTIZATION = Object.freeze({
+  quantizePosition: 24,
+  quantizeNormal: 12,
+});
+
+/**
+ * Named build-setting bundles. Each preset lists tessellation deflection and
+ * Draco quantization values. Explicit build options replace the preset
+ * entries. Build settings apply to STEP sources; native GLB sources keep
+ * their existing compression.
+ */
+export const PRESETS = Object.freeze({
+  web: Object.freeze({
+    linearDeflection: 0.005,
+    angularDeflection: 0.8,
+    quantizePosition: 16,
+    quantizeNormal: 8,
+  }),
+  high: Object.freeze({
+    linearDeflection: 0.0002,
+    angularDeflection: 0.2,
+    quantizePosition: 24,
+    quantizeNormal: 12,
+  }),
+});
+
+/**
+ * Resolves a preset name and explicit overrides into concrete build options.
+ * Explicit values replace the preset entries; undefined values are ignored.
+ * An unknown preset name throws.
+ */
+export function resolveBuildOptions(preset, overrides = {}) {
+  const bundle = preset === undefined ? {} : PRESETS[preset];
+  if (bundle === undefined) throw new Error(`unknown preset: ${preset}`);
+  const resolved = { ...bundle };
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value !== undefined) resolved[key] = value;
+  }
+  return resolved;
+}
+
 export const ROLES = Object.freeze([
   "unassigned", "body", "lid", "insert", "hardware", "decoration", "other", "ignore",
 ]);
@@ -31,7 +72,9 @@ const dracoEncoderPromise = draco3d.createEncoderModule({});
 let occtPromise;
 
 function occt() {
-  occtPromise ??= occtImportFactory();
+  occtPromise ??= occtImportFactory({
+    print: (line) => process.stderr.write(`${line}\n`),
+  });
   return occtPromise;
 }
 
@@ -325,17 +368,17 @@ export function sceneFor(imported, inspection, mappings) {
   return scene;
 }
 
-export function exportGLB(scene) {
+export function exportGLB(scene, options = {}) {
   installFileReaderPolyfill();
   return new Promise((resolveExport, reject) => {
     new GLTFExporter().parse(scene, (result) => {
       if (!(result instanceof ArrayBuffer)) return reject(new Error("GLTFExporter returned JSON instead of binary GLB"));
       resolveExport(Buffer.from(result));
     }, reject, { binary: true, trs: false, onlyVisible: true });
-  }).then(compressGLB);
+  }).then((bytes) => compressGLB(bytes, options));
 }
 
-export async function compressGLB(bytes) {
+export async function compressGLB(bytes, options = {}) {
   const encoder = await dracoEncoderPromise;
   const io = new NodeIO()
     .registerExtensions(ALL_EXTENSIONS)
@@ -343,8 +386,8 @@ export async function compressGLB(bytes) {
   const document = await io.readBinary(new Uint8Array(bytes));
   document.setLogger(new Logger(Logger.Verbosity.SILENT));
   await document.transform(draco({
-    quantizePosition: 24,
-    quantizeNormal: 12,
+    quantizePosition: options.quantizePosition ?? DEFAULT_QUANTIZATION.quantizePosition,
+    quantizeNormal: options.quantizeNormal ?? DEFAULT_QUANTIZATION.quantizeNormal,
   }));
   return Buffer.from(await io.writeBinary(document));
 }
@@ -481,28 +524,36 @@ export async function importNativeAssembly(bytes, hash) {
 /**
  * Reads a STEP or GLB source and returns the assembly manifest. STEP geometry
  * comes back in meters. The manifest lists every occurrence with a stable ID.
+ * The optional linear and angular deflection apply to STEP sources only.
  */
-export async function inspectSource(bytes, sourceSHA256) {
+export async function inspectSource(bytes, sourceSHA256, options = {}) {
   if (isGLB(bytes)) {
     const native = await importNativeAssembly(bytes, sourceSHA256);
     return { native, imported: null, inspection: native.inspection };
   }
-  const imported = (await occt()).ReadStepFile(new Uint8Array(bytes), { linearUnit: "meter" });
+  const params = { linearUnit: "meter" };
+  if (options.linearDeflection !== undefined) {
+    params.linearDeflectionType = "bounding_box_ratio";
+    params.linearDeflection = options.linearDeflection;
+  }
+  if (options.angularDeflection !== undefined) params.angularDeflection = options.angularDeflection;
+  const imported = (await occt()).ReadStepFile(new Uint8Array(bytes), params);
   return { native: null, imported, inspection: inspectImport(imported, sourceSHA256) };
 }
 
 /**
  * Builds a Draco-compressed GLB from a source and a list of occurrence
- * mappings. The same input produces the same bytes.
+ * mappings. The same input produces the same bytes. Build options apply to
+ * STEP sources; native GLB sources keep their existing compression.
  */
-export async function buildSource(source, mappings = []) {
+export async function buildSource(source, mappings = [], options = {}) {
   const normalized = normalizeMappings(
     mappings,
     new Set(source.inspection.occurrences.map((occurrence) => occurrence.id)),
   );
   const bytes = source.native
     ? await source.native.build(normalized)
-    : await exportGLB(sceneFor(source.imported, source.inspection, normalized));
+    : await exportGLB(sceneFor(source.imported, source.inspection, normalized), options);
   assertGLB(bytes);
   return bytes;
 }

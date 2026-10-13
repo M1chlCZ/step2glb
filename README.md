@@ -9,6 +9,9 @@ Convert STEP CAD files to GLB for the web. The output is deterministic.
 - Records the semantic role and the material field for each part.
 - Enforces limits on depth, occurrences, triangles, vertices, and bytes.
 - Reads native GLB assemblies and re-exports them with the same metadata.
+- Converts many sources in one batch run with a JSON summary.
+- Applies build presets (`web`, `high`) with per-setting overrides.
+- Prints optional per-file progress to stderr.
 - Runs as a CLI or as a stdin worker.
 
 ## Install
@@ -55,6 +58,35 @@ A mapping file is a JSON array:
 ]
 ```
 
+Apply a preset and override one setting:
+
+```
+step2glb build model.step --out model.glb --preset web --quantize-position 20
+```
+
+Convert many files or directories:
+
+```
+step2glb batch parts/ models/ --out-dir dist --recursive --progress
+```
+
+The batch command writes `<out-dir>/<basename>.glb` for every source. A
+directory input contributes `.step`, `.stp` and `.glb` files; directories are
+walked only with `--recursive`. With `--mapping-dir`, a `<basename>.json` file
+in that directory is used as the mapping file when it exists. Files are
+converted in sorted order.
+
+The batch command prints a JSON summary on stdout:
+
+```json
+{"version":1,"total":2,"succeeded":1,"failed":1,"results":[{"source":"parts/a.step","out":"dist/a.glb","ok":true,"error":null},{"source":"parts/b.step","out":null,"ok":false,"error":"STEP import failed"}]}
+```
+
+A failed file does not stop the run. The exit code is 0 when every file
+succeeded, 1 when any file failed, and 2 for a usage error. With `--progress`,
+the stage lines `[1/2] parts/a.step: inspecting` go to stderr; they never
+appear on stdout.
+
 Run the worker:
 
 ```
@@ -62,6 +94,25 @@ echo '{"version":1,"operation":"inspect","source_path":"model.step","source_sha2
 ```
 
 The worker reads one request on stdin and writes one response on stdout. Use it to convert files in a sandbox.
+
+## Build settings
+
+`build` and `batch` accept `--preset web` or `--preset high`. A preset sets the
+STEP tessellation deflection and the Draco quantization. An explicit flag
+overrides the preset value.
+
+| Setting | `web` | `high` | Override flag |
+| --- | --- | --- | --- |
+| Linear deflection, bounding-box ratio | 0.005 | 0.0002 | `--linear-deflection <ratio>` |
+| Angular deflection, radians | 0.8 | 0.2 | `--angular-deflection <radians>` |
+| Draco position bits | 16 | 24 | `--quantize-position <bits>` |
+| Draco normal bits | 8 | 12 | `--quantize-normal <bits>` |
+
+Without a preset the STEP reader defaults apply (0.001 bounding-box ratio and
+0.5 radians) and Draco uses 24-bit positions with 12-bit normals. The `web`
+preset produces smaller files. The `high` preset keeps more detail. The
+quantization flags accept integers from 8 to 30. Build settings apply to STEP
+sources; native GLB sources are re-exported with their existing compression.
 
 ## Units
 
@@ -104,7 +155,10 @@ An occurrence with the role `ignore` is not exported.
 
 ## Determinism
 
-The same source and the same mappings produce the same bytes. Occurrence IDs depend on the hierarchy path, not on names. Draco compression uses 24-bit positions and 12-bit normals.
+The same source, the same mappings and the same build settings produce the
+same bytes. Occurrence IDs depend on the hierarchy path, not on names. Draco
+compression uses 24-bit positions and 12-bit normals by default; a preset or
+an explicit flag changes these settings and the bytes.
 
 ## Development
 

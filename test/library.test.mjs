@@ -3,12 +3,15 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 
 import {
+  DEFAULT_QUANTIZATION,
   LIMITS,
   MAX_VERTICES,
+  PRESETS,
   exportGLB,
   importNativeAssembly,
   inspectImport,
   normalizeMappings,
+  resolveBuildOptions,
   sceneFor,
 } from "../src/step2glb.mjs";
 
@@ -357,4 +360,50 @@ test("native assemblies reject multi-material meshes that cannot retain per-part
     }), "a".repeat(64)),
     /one primitive per mesh/i,
   );
+});
+
+test("build presets bundle the documented settings and explicit values win", () => {
+  assert.deepEqual(DEFAULT_QUANTIZATION, { quantizePosition: 24, quantizeNormal: 12 });
+  assert.deepEqual(PRESETS.web, {
+    linearDeflection: 0.005,
+    angularDeflection: 0.8,
+    quantizePosition: 16,
+    quantizeNormal: 8,
+  });
+  assert.deepEqual(PRESETS.high, {
+    linearDeflection: 0.0002,
+    angularDeflection: 0.2,
+    quantizePosition: 24,
+    quantizeNormal: 12,
+  });
+  assert.ok(Object.isFrozen(PRESETS));
+  assert.ok(Object.isFrozen(PRESETS.web));
+  assert.deepEqual(resolveBuildOptions(), {});
+  assert.deepEqual(resolveBuildOptions("web"), PRESETS.web);
+  assert.deepEqual(
+    resolveBuildOptions("web", { quantizePosition: 24, quantizeNormal: 12 }),
+    { linearDeflection: 0.005, angularDeflection: 0.8, quantizePosition: 24, quantizeNormal: 12 },
+  );
+  assert.deepEqual(
+    resolveBuildOptions(undefined, { linearDeflection: 0.002, quantizeNormal: undefined }),
+    { linearDeflection: 0.002 },
+  );
+  assert.throws(() => resolveBuildOptions("bogus"), /unknown preset/);
+});
+
+test("export options control Draco quantization and remain deterministic", async () => {
+  const imported = {
+    success: true,
+    root: { name: "Assembly", meshes: [0], children: [] },
+    meshes: [triangleMesh("Housing")],
+  };
+  const inspection = inspectImport(imported, "0".repeat(64));
+  const scene = () => sceneFor(imported, inspection, new Map());
+  const defaults = await exportGLB(scene());
+  const web = await exportGLB(scene(), { quantizePosition: 16, quantizeNormal: 8 });
+  const again = await exportGLB(scene(), { quantizePosition: 16, quantizeNormal: 8 });
+  const partial = await exportGLB(scene(), { quantizePosition: 30 });
+  assert.deepEqual(web, again);
+  assert.notDeepEqual(web, defaults);
+  assert.notDeepEqual(partial, defaults);
 });
