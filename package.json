@@ -45,6 +45,6 @@
     "@gltf-transform/functions": "^4.5.1",
     "draco3dgltf": "1.5.7",
     "occt-import-js": "0.0.23",
-    "three": "0.185.1"
+    "three": "0.186.1"
   }
 }
